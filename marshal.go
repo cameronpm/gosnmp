@@ -461,10 +461,10 @@ func (packet *SnmpPacket) marshalPDU() ([]byte, error) {
 		}
 
 		// error
-		buf.Write([]byte{2, 1, 0})
+		buf.Write([]byte{2, 1, byte(packet.Error)})
 
 		// error index
-		buf.Write([]byte{2, 1, 0})
+		buf.Write([]byte{2, 1, packet.ErrorIndex})
 
 	}
 
@@ -526,21 +526,22 @@ func marshalVarbind(pdu *SnmpPDU) ([]byte, error) {
 	// Marshal the PDU type into the appropriate BER
 	switch pdu.Type {
 
-	case Null:
+	case Null, EndOfMibView, EndOfContents, NoSuchInstance, NoSuchObject:
 		ltmp, err := marshalLength(len(oid))
 		if err != nil {
 			return nil, err
 		}
-		tmpBuf.Write([]byte{byte(ObjectIdentifier)})
+		tmpBuf.WriteByte(byte(ObjectIdentifier))
 		tmpBuf.Write(ltmp)
 		tmpBuf.Write(oid)
-		tmpBuf.Write([]byte{Null, 0x00})
+		tmpBuf.WriteByte(byte(pdu.Type))
+		tmpBuf.WriteByte(0)
 
 		ltmp, err = marshalLength(tmpBuf.Len())
 		if err != nil {
 			return nil, err
 		}
-		pduBuf.Write([]byte{byte(Sequence)})
+		pduBuf.WriteByte(byte(Sequence))
 		pduBuf.Write(ltmp)
 		tmpBuf.WriteTo(pduBuf)
 
@@ -568,6 +569,34 @@ func marshalVarbind(pdu *SnmpPDU) ([]byte, error) {
 		pduBuf.WriteByte(byte(len(oid) + len(intBytes) + 4))
 		pduBuf.Write(tmpBuf.Bytes())
 
+	case Counter64:
+		// Oid
+		tmpBuf.Write([]byte{byte(ObjectIdentifier), byte(len(oid))})
+		tmpBuf.Write(oid)
+
+		// Number
+		var intBytes []byte
+		switch value := pdu.Value.(type) {
+		case int:
+			intBytes, err = marshalInt64(int64(value))
+			pdu.Check(err)
+		case int64:
+			intBytes, err = marshalInt64(value)
+			pdu.Check(err)
+		case uint64:
+			intBytes, err = marshalInt64(int64(value))
+			pdu.Check(err)
+		default:
+			return nil, fmt.Errorf("Unable to marshal pdu.Type %v; unknown pdu.Value %v (type %T)", pdu.Type, pdu.Value, pdu.Value)
+		}
+		tmpBuf.Write([]byte{byte(pdu.Type), byte(len(intBytes))})
+		tmpBuf.Write(intBytes)
+
+		// Sequence, length of oid + integer, then oid/integer data
+		pduBuf.WriteByte(byte(Sequence))
+		pduBuf.WriteByte(byte(len(oid) + len(intBytes) + 4))
+		pduBuf.Write(tmpBuf.Bytes())
+
 	case Counter32, Gauge32, TimeTicks, Uinteger32:
 		// Oid
 		tmpBuf.Write([]byte{byte(ObjectIdentifier), byte(len(oid))})
@@ -580,7 +609,7 @@ func marshalVarbind(pdu *SnmpPDU) ([]byte, error) {
 			intBytes, err = marshalUint32(value)
 			pdu.Check(err)
 		default:
-			return nil, fmt.Errorf("Unable to marshal pdu.Type %v; unknown pdu.Value %v", pdu.Type, pdu.Value)
+			return nil, fmt.Errorf("Unable to marshal pdu.Type %v; unknown pdu.Value %v (type %T)", pdu.Type, pdu.Value, pdu.Value)
 		}
 		tmpBuf.Write([]byte{byte(pdu.Type), byte(len(intBytes))})
 		tmpBuf.Write(intBytes)
@@ -748,7 +777,7 @@ func (x *GoSNMP) unmarshalPayload(packet []byte, cursor int, response *SnmpPacke
 	requestType := PDUType(packet[cursor])
 	switch requestType {
 	// known, supported types
-	case GetResponse, GetNextRequest, GetBulkRequest, Report, SNMPv2Trap:
+	case GetRequest, GetResponse, GetNextRequest, GetBulkRequest, Report, SNMPv2Trap:
 		response.PDUType = requestType
 		err = x.unmarshalResponse(packet[cursor:], response)
 		if err != nil {

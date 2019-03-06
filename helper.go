@@ -75,6 +75,7 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 	switch Asn1BER(data[0]) {
 
 	case Integer:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.1
 		// 0x02. signed
 		x.logPrint("decodeValue: type is Integer")
 		length, cursor := parseLength(data)
@@ -87,6 +88,7 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 		retVal.Type = Integer
 		retVal.Value = ret
 	case OctetString:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.2
 		// 0x04
 		x.logPrint("decodeValue: type is OctetString")
 		length, cursor := parseLength(data)
@@ -98,6 +100,7 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 		retVal.Type = Null
 		retVal.Value = nil
 	case ObjectIdentifier:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.3
 		// 0x06
 		x.logPrint("decodeValue: type is ObjectIdentifier")
 		rawOid, _, err := parseRawField(data, "OID")
@@ -112,6 +115,7 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 		retVal.Type = ObjectIdentifier
 		retVal.Value = oidToString(oid)
 	case IPAddress:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.5
 		// 0x40
 		x.logPrint("decodeValue: type is IPAddress")
 		retVal.Type = IPAddress
@@ -135,6 +139,7 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 			return nil, fmt.Errorf("got ipaddress len %d, expected 4 or 16", data[1])
 		}
 	case Counter32:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.6
 		// 0x41. unsigned
 		x.logPrint("decodeValue: type is Counter32")
 		length, cursor := parseLength(data)
@@ -144,8 +149,9 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 			break
 		}
 		retVal.Type = Counter32
-		retVal.Value = ret
+		retVal.Value = uint32(ret)
 	case Gauge32:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.7
 		// 0x42. unsigned
 		x.logPrint("decodeValue: type is Gauge32")
 		length, cursor := parseLength(data)
@@ -155,8 +161,9 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 			break
 		}
 		retVal.Type = Gauge32
-		retVal.Value = ret
+		retVal.Value = uint32(ret)
 	case TimeTicks:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.8
 		// 0x43
 		x.logPrint("decodeValue: type is TimeTicks")
 		length, cursor := parseLength(data)
@@ -166,8 +173,9 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 			break
 		}
 		retVal.Type = TimeTicks
-		retVal.Value = ret
+		retVal.Value = uint32(ret)
 	case Opaque:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.9
 		// 0x44
 		x.logPrint("decodeValue: type is Opaque")
 		length, cursor := parseLength(data)
@@ -175,6 +183,7 @@ func (x *GoSNMP) decodeValue(data []byte, msg string) (retVal *variable, err err
 		// recursively decode opaque data
 		return x.decodeValue(opaqueData, msg)
 	case Counter64:
+		// https://tools.ietf.org/html/rfc2578#section-7.1.10
 		// 0x46
 		x.logPrint("decodeValue: type is Counter64")
 		length, cursor := parseLength(data)
@@ -384,6 +393,54 @@ func marshalInt32(value int) (rs []byte, err error) {
 		return rs, nil
 	}
 	return nil, fmt.Errorf("unable to marshal %d", value)
+}
+
+/* XXX REWRITE XXX
+snmp Integer32 and INTEGER:
+-2^31 and 2^31-1 inclusive (-2147483648 to 2147483647 decimal)
+(FYI https://groups.google.com/forum/#!topic/comp.protocols.snmp/1xaAMzCe_hE)
+
+versus:
+
+snmp Counter32, Gauge32, TimeTicks, Unsigned32: (below)
+non-negative integer, maximum value of 2^32-1 (4294967295 decimal)
+*/
+
+// XXX REWRITE marshalInt32 builds a byte representation of a signed 32 bit int in BigEndian form
+// ie -2^31 and 2^31-1 inclusive (-2147483648 to 2147483647 decimal)
+func marshalInt64(value int64) (rs []byte, err error) {
+	rs = make([]byte, 8)
+	if 0 <= value && value <= math.MaxInt64 {
+		binary.BigEndian.PutUint64(rs, uint64(value))
+		if value <= 0x80 {
+			return rs[7:], nil
+		}
+		if value <= 0x8000 {
+			return rs[6:], nil
+		}
+		if value <= 0x800000 {
+			return rs[5:], nil
+		}
+		if value <= 0x80000000 {
+			return rs[4:], nil
+		}
+		if value <= 0x8000000000 {
+			return rs[3:], nil
+		}
+		if value <= 0x800000000000 {
+			return rs[2:], nil
+		}
+		if value <= 0x80000000000000 {
+			return rs[1:], nil
+		}
+	} else {
+		value = ^value
+		binary.BigEndian.PutUint64(rs, uint64(value))
+		for k, v := range rs {
+			rs[k] = ^v
+		}
+	}
+	return rs, nil
 }
 
 // Counter32, Gauge32, TimeTicks, Unsigned32

@@ -406,6 +406,20 @@ func (x *GoSNMP) SnmpEncodePacket(pdutype PDUType, pdus []SnmpPDU, nonRepeaters 
 	return out, nil
 }
 
+// SnmpEncodePacketExplicit exposes SNMP packet generation to external callers.
+// You are completely responsible for creating a well formed SnmpPacket struct.
+func (x *GoSNMP) SnmpEncodePacketExplicit(pkt *SnmpPacket) ([]byte, error) {
+	var err error = nil
+
+	var out []byte
+	out, err = pkt.marshalMsg()
+	if err != nil {
+		return []byte{}, err
+	}
+
+	return out, nil
+}
+
 // SnmpDecodePacket exposes SNMP packet parsing to external callers.
 // This is useful for processing traffic from other sources and
 // building test harnesses.
